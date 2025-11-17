@@ -1,5 +1,4 @@
-import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys'
-import { Boom } from '@hapi/boom'
+import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
 import fs from 'fs'
 import path from 'path'
@@ -105,11 +104,11 @@ class WhatsAppBot {
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
         const { version } = await fetchLatestBaileysVersion()
         
-        let useQR = true
+        let printQR = true
         if (!state.creds.registered) {
             const authMethod = await this.getAuthMethod()
             if (authMethod === 'code') {
-                useQR = false
+                printQR = false
             }
         }
         
@@ -117,25 +116,21 @@ class WhatsAppBot {
             version,
             auth: state,
             logger,
-            // 1. Usar un identificador de navegador estándar y confiable
-            browser: Browsers.macOS('Chrome'),
-            printQRInTerminal: useQR,
+            browser: ['Windows', 'Chrome', '38.172.128.77'],
+            printQRInTerminal: printQR,
             syncFullHistory: false,
             markOnlineOnConnect: true,
         })
 
-        // Solo si se eligió el código y NO hay una sesión registrada
-        if (!useQR && !this.sock.authState.creds.registered) {
+        if (!printQR && !this.sock.authState.creds.registered) {
             try {
                 const phoneNumber = await this.getPhoneNumber()
-                
-                // 2. La solución clave: Añadir un pequeño retraso para estabilizar la conexión antes de pedir el código
-                console.log('[Auth] Esperando para estabilizar la conexión...')
-                await new Promise(resolve => setTimeout(resolve, 3000))
+                console.log(`[Auth] El socket se está inicializando, esperando 3 segundos...`)
+                await new Promise(resolve => setTimeout(resolve, 3000));
 
                 console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
                 const code = await this.sock.requestPairingCode(phoneNumber)
-                console.log(`[Auth] Tu código de emparejamiento es: ${code.match(/.{1,4}/g)?.join('-') || code}`)
+                console.log(`[Auth] Tu código de emparejamiento es: ${code.match(/.{1,4}/g).join('-') || code}`)
             } catch (error) {
                 console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
                 return
@@ -147,16 +142,15 @@ class WhatsAppBot {
         this.sock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update
 
-            if (qr && useQR) {
+            if (qr && printQR) {
                 console.log('Escanea el código QR con tu WhatsApp:')
                 qrcode.generate(qr, { small: true })
             }
 
             if (connection === 'close') {
-                // Usar Boom para un mejor diagnóstico de errores
-                const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
+                const reason = lastDisconnect?.error?.output?.statusCode
                 const shouldReconnect = reason !== DisconnectReason.loggedOut
-                console.log(`[Conexión] cerrada, razón: ${DisconnectReason[reason] || 'Desconocida'}, reconectando: ${shouldReconnect}`)
+                console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`)
                 if (shouldReconnect) {
                     setTimeout(() => this.startBot(), 5000)
                 }

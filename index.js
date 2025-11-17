@@ -5,7 +5,7 @@ import path from 'path'
 import readline from 'readline'
 import pino from 'pino'
 import chokidar from 'chokidar'
-import settings from './src/settings.json' assert { type: 'json' }
+import settings from './src/settings.json' with { type: 'json' }  
 
 const logger = pino({ level: 'silent' })
 

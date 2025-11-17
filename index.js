@@ -111,7 +111,7 @@ class WhatsAppBot {
         browser: ['Windows', 'Chrome', '38.172.128.77'],
         syncFullHistory: false,
         markOnlineOnConnect: true,
-        printQRInTerminal: authMethod === 'qr'
+        printQRInTerminal: true,
         })
 
         this.sock.ev.on('creds.update', saveCreds);
@@ -151,11 +151,15 @@ class WhatsAppBot {
             if (authMethod === 'code') {
                 const phoneNumber = await this.getPhoneNumber();
                 const tempSock = makeWASocket({
-                    version: (await fetchLatestBaileysVersion()).version,
-                    auth: this.authInfo.state,
-                    logger,
-                    printQRInTerminal: false,
-                });
+                version,
+                auth: state,
+                logger,
+                browser: ['Windows', 'Chrome', '38.172.128.77'],
+                syncFullHistory: false,
+                markOnlineOnConnect: true,
+                printQRInTerminal: false,
+               });
+                
                 try {
                     console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`);
                     await new Promise(resolve => setTimeout(resolve, 2000));

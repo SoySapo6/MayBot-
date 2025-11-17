@@ -104,24 +104,25 @@ class WhatsAppBot {
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
         const { version } = await fetchLatestBaileysVersion()
         
-        let authMethod = 'qr'
+        let printQR = true
         if (!state.creds.registered) {
-            authMethod = await this.getAuthMethod()
+            const authMethod = await this.getAuthMethod()
+            if (authMethod === 'code') {
+                printQR = false
+            }
         }
         
-        const socketConfig = {
+        this.sock = makeWASocket({
             version,
             auth: state,
             logger,
             browser: ['Windows', 'Chrome', '38.172.128.77'],
+            printQRInTerminal: printQR, // Usar la variable de control
             syncFullHistory: false,
             markOnlineOnConnect: true,
-            printQRInTerminal: authMethod === 'qr'
-        }
+        })
 
-        this.sock = makeWASocket(socketConfig)
-
-        if (authMethod === 'code' && !this.sock.authState.creds.registered) {
+        if (!printQR && !this.sock.authState.creds.registered) {
             try {
                 const phoneNumber = await this.getPhoneNumber()
                 console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
@@ -138,7 +139,7 @@ class WhatsAppBot {
         this.sock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update
 
-            if (qr) {
+            if (qr && printQR) { // Solo mostrar QR si se eligió ese método
                 console.log('Escanea el código QR con tu WhatsApp:')
                 qrcode.generate(qr, { small: true })
             }

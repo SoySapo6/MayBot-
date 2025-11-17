@@ -1,4 +1,4 @@
-import settings from '../../src/settings.json' with { type: 'json' };
+import settings from '../src/settings.json' with { type: 'json' };
 import { applyFont, getRandom } from '../../lib/functions.js';
 
 const command = {

@@ -1,1 +1,27 @@
-
+{
+  "owner": {
+    "number": "51921826291",
+    "name": "SoyMaycol",
+    "github": "SoySapo6"
+  },
+  "branding": {
+    "iconUrl": ["https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ7sf1ruyaBeuvBIrw46cI_suvaz5YIV8cTE_lRoQUDGg&s=10", "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTBefKRHXwnXDWYMRCNuQ2VgEs6q0VWuQajlDKYIfMoMw&s=10", "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTSEMBg3Vcx9MGCxJsgS6Irh5cLxrbuZoPFdccj7Rszbw&s=10", "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTa6QxvAo6o0CkjuvfGWP4nPJYn3TpeomVKp8nRUg6NMw&s=10"],
+    "bannerUrl": ["https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTO8_UqSH8bjQSYVLxV8fnHwulX48W9Q1kSW1QwVAP5Gw&s=10", "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRzXQA1VA9Wst6rZ4gx1647BrQnh_iE-wJz50NJp8NsNw&s"],
+    "emoji": "🤓"
+  },
+  "currency": "Dolares",
+  "channel": {
+    "id": "120363406779062566@newsletter",
+    "name": "𝐒𝐨𝐲𝐌𝐚𝐲𝐜𝐨𝐥 <𝟑 • Actualizaciones"
+  },
+  "bot": {
+    "prefixes": [".", "!", "#", "/"],
+    "sessionFolder": "MayBot"
+    "botname": "MayBot"
+  },
+  "fonts": {
+    "letters": "a b c d e f g h i j k l m n o p q r s t u v w x y z",
+    "styledLetters": "α Ⴆ ƈ ԃ ҽ ϝ ɠ ԋ ι ʝ ƙ ʅ ɱ ɳ σ ρ ϙ ɾ ʂ ƚ υ ʋ ɯ x ყ ȥ",
+    "smallLetters": "ᵃ ᵇ ᶜ ᵈ ᵉ ᶠ ᵍ ʰ ⁱ ʲ ᵏ ˡ ᵐ ⁿ ᵒ ᵖ q ʳ ˢ ᵗ ᵘ ᵛ ʷ ˣ ʸ ᶻ"
+  }
+}

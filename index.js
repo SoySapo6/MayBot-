@@ -120,14 +120,14 @@ class WhatsAppBot {
         }
 
         this.sock = makeWASocket({
-            version,
-            auth: state,
-            logger,
-            browser: [settings.bot.botname, 'Chrome', '121.0.0.0'],
-            syncFullHistory: false,
-            markOnlineOnConnect: true,
-            printQRInTerminal: authMethod === 'qr',
-        });
+        version,
+        auth: state,
+        logger,
+        browser: ['Windows', 'Chrome', '38.172.128.77'],
+        syncFullHistory: false,
+        markOnlineOnConnect: true,
+        printQRInTerminal: authMethod === 'qr'
+        })
 
         this.sock.ev.on('creds.update', saveCreds);
 

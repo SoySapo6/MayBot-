@@ -13,7 +13,6 @@ class WhatsAppBot {
     constructor() {
         this.sock = null
         this.commands = new Map()
-        this.authInfo = null
         this.loadCommands()
         this.watchCommands()
     }
@@ -100,8 +99,9 @@ class WhatsAppBot {
         })
     }
 
-    async connectToWhatsApp() {
-        const { state, saveCreds } = this.authInfo
+    async start() {
+        console.log(`[MayBot] Inicializando...`)
+        const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
         const { version } = await fetchLatestBaileysVersion()
 
         this.sock = makeWASocket({
@@ -109,14 +109,14 @@ class WhatsAppBot {
             auth: state,
             logger,
             browser: ['Windows', 'Chrome', '38.172.128.77'],
+            printQRInTerminal: true,
             syncFullHistory: false,
             markOnlineOnConnect: true,
-            printQRInTerminal: true
         })
 
         this.sock.ev.on('creds.update', saveCreds)
 
-        this.sock.ev.on('connection.update', (update) => {
+        this.sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update
 
             if (qr) {
@@ -129,7 +129,9 @@ class WhatsAppBot {
                 const shouldReconnect = reason !== DisconnectReason.loggedOut
                 console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`)
                 if (shouldReconnect) {
-                    this.startBot()
+                    this.start()
+                } else {
+                    console.log('[Sistema] Conexión cerrada permanentemente. Borra la carpeta de sesión si quieres escanear un nuevo código.')
                 }
             } else if (connection === 'open') {
                 console.log('[Conexión] establecida exitosamente.')
@@ -141,42 +143,20 @@ class WhatsAppBot {
                 await this.handleMessage(message)
             }
         })
-    }
 
-    async startBot() {
-        console.log(`[MayBot] Inicializando...`)
-        this.authInfo = await useMultiFileAuthState(settings.bot.sessionFolder)
-
-        const { state } = this.authInfo
-        const { version } = await fetchLatestBaileysVersion()
-
-        if (!state.creds.registered) {
+        if (!this.sock.authState.creds.registered) {
             const authMethod = await this.getAuthMethod()
             if (authMethod === 'code') {
-                const phoneNumber = await this.getPhoneNumber()
-                const tempSock = makeWASocket({
-                    version,
-                    auth: state,
-                    logger,
-                    browser: ['Windows', 'Chrome', '38.172.128.77'],
-                    syncFullHistory: false,
-                    markOnlineOnConnect: true,
-                    printQRInTerminal: false
-                })
-
                 try {
+                    const phoneNumber = await this.getPhoneNumber()
                     console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
-                    await new Promise(resolve => setTimeout(resolve, 2000))
-                    const code = await tempSock.requestPairingCode(phoneNumber)
+                    const code = await this.sock.requestPairingCode(phoneNumber)
                     console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
                 } catch (error) {
                     console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
-                    return
                 }
             }
         }
-
-        this.connectToWhatsApp()
     }
 
     async handleMessage(message) {
@@ -207,7 +187,7 @@ class WhatsAppBot {
 }
 
 const bot = new WhatsAppBot()
-bot.startBot().catch(error => {
+bot.start().catch(error => {
     console.error('[Error Crítico] Fallo al iniciar el bot:', error)
 })
 

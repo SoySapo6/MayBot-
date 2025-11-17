@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import pino from 'pino';
+import chokidar from 'chokidar'; // <-- Nueva dependencia para vigilar archivos
 import settings from './src/settings.json' assert { type: 'json' };
 
 const logger = pino({ level: 'silent' });
@@ -13,6 +14,8 @@ class WhatsAppBot {
         this.sock = null;
         this.commands = new Map();
         this.loadCommands();
+        // Inicia la vigilancia de la carpeta de comandos
+        this.watchCommands();
     }
 
     async loadCommands() {
@@ -30,7 +33,7 @@ class WhatsAppBot {
                 for (const file of commandFiles) {
                     try {
                         const filePath = path.join(categoryPath, file);
-                        const { default: command } = await import(`file://${filePath}`);
+                        const { default: command } = await import(`file://${filePath}?v=${Date.now()}`);
                         if (command && command.name) {
                             command.category = category;
                             this.commands.set(command.name, command);
@@ -39,14 +42,47 @@ class WhatsAppBot {
                             }
                         }
                     } catch (error) {
-                        console.error(`Error cargando el comando ${file}:`, error);
+                        console.error(`[Error] Cargando el comando ${file}:`, error);
                     }
                 }
             }
         }
         console.log(`[Sistema] ${this.commands.size} comandos cargados.`);
     }
-    
+
+    // --- NUEVA FUNCIÓN DE VIGILANCIA (HOT-RELOAD) ---
+    watchCommands() {
+        const commandsPath = path.join(process.cwd(), 'src', 'commands');
+        const watcher = chokidar.watch(commandsPath, {
+            persistent: true,
+            ignoreInitial: true,
+        });
+
+        watcher.on('change', async (filePath) => {
+            if (filePath.endsWith('.js')) {
+                console.log(`[Hot-Reload] Detectado cambio en: ${path.basename(filePath)}. Recargando...`);
+                try {
+                    // Cache-busting para asegurar que se importa el nuevo archivo
+                    const { default: newCommand } = await import(`file://${filePath}?update=${Date.now()}`);
+                    const category = path.basename(path.dirname(filePath));
+
+                    if (newCommand && newCommand.name) {
+                        newCommand.category = category;
+                        // Sobreescribe el comando y sus alias en el mapa
+                        this.commands.set(newCommand.name, newCommand);
+                        if (newCommand.aliases && Array.isArray(newCommand.aliases)) {
+                            newCommand.aliases.forEach(alias => this.commands.set(alias, newCommand));
+                        }
+                        console.log(`[Hot-Reload] Comando '${newCommand.name}' actualizado exitosamente.`);
+                    }
+                } catch (error) {
+                    console.error(`[Hot-Reload] Fallo al recargar el comando ${path.basename(filePath)}:`, error);
+                }
+            }
+        });
+         console.log('[Sistema] Vigilancia de comandos activada (Hot-Reload).');
+    }
+
     async getAuthMethod() {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
         return new Promise((resolve) => {
@@ -72,7 +108,6 @@ class WhatsAppBot {
 
     async startBot() {
         console.log(`[MayBot] Inicializando...`);
-
         const authMethod = await this.getAuthMethod();
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder);
         const { version } = await fetchLatestBaileysVersion();
@@ -135,36 +170,26 @@ class WhatsAppBot {
         if (message.key.fromMe || !message.message) return;
 
         const messageText = message.message.conversation || message.message.extendedTextMessage?.text || '';
-        
         const usedPrefix = settings.bot.prefixes.find(p => messageText.startsWith(p));
         if (!usedPrefix) return;
 
         const args = messageText.slice(usedPrefix.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
-        
         const command = this.commands.get(commandName);
 
         if (command) {
+            // --- NUEVO BLOQUE DE SIMULACIÓN DE ESCRITURA ---
+            await this.sock.sendPresenceUpdate('composing', message.key.remoteJid);
             try {
                 console.log(`[Comando] Ejecutando: ${command.name} | Usuario: ${message.key.remoteJid}`);
-                
-                const m = {
-                    ...message,
-                    chat: message.key.remoteJid,
-                    sender: message.key.participant || message.key.remoteJid,
-                };
-
-                await command.execute(m, { 
-                    conn: this.sock, 
-                    args, 
-                    usedPrefix, 
-                    command: commandName,
-                    commands: this.commands 
-                });
-
+                const m = { ...message, chat: message.key.remoteJid, sender: message.key.participant || message.key.remoteJid };
+                await command.execute(m, { conn: this.sock, args, usedPrefix, command: commandName, commands: this.commands });
             } catch (error) {
                 console.error(`[Error] en el comando ${command.name}:`, error);
                 await this.sock.sendMessage(message.key.remoteJid, { text: `Ocurrió un error al ejecutar el comando: ${error.message}` }, { quoted: message });
+            } finally {
+                // Se asegura de quitar el "escribiendo..." sin importar si el comando tuvo éxito o falló
+                await this.sock.sendPresenceUpdate('available', message.key.remoteJid);
             }
         }
     }

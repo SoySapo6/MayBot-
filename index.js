@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import pino from 'pino';
-import chokidar from 'chokidar'; // <-- Nueva dependencia para vigilar archivos
+import chokidar from 'chokidar';
 import settings from './src/settings.json' with { type: 'json' };
 
 const logger = pino({ level: 'silent' });
@@ -13,8 +13,8 @@ class WhatsAppBot {
     constructor() {
         this.sock = null;
         this.commands = new Map();
+        this.authInfo = null;
         this.loadCommands();
-        // Inicia la vigilancia de la carpeta de comandos
         this.watchCommands();
     }
 
@@ -50,25 +50,19 @@ class WhatsAppBot {
         console.log(`[Sistema] ${this.commands.size} comandos cargados.`);
     }
 
-    // --- NUEVA FUNCIÓN DE VIGILANCIA (HOT-RELOAD) ---
     watchCommands() {
         const commandsPath = path.join(process.cwd(), 'src', 'commands');
-        const watcher = chokidar.watch(commandsPath, {
-            persistent: true,
-            ignoreInitial: true,
-        });
+        const watcher = chokidar.watch(commandsPath, { persistent: true, ignoreInitial: true });
 
         watcher.on('change', async (filePath) => {
             if (filePath.endsWith('.js')) {
                 console.log(`[Hot-Reload] Detectado cambio en: ${path.basename(filePath)}. Recargando...`);
                 try {
-                    // Cache-busting para asegurar que se importa el nuevo archivo
                     const { default: newCommand } = await import(`file://${filePath}?update=${Date.now()}`);
                     const category = path.basename(path.dirname(filePath));
 
                     if (newCommand && newCommand.name) {
                         newCommand.category = category;
-                        // Sobreescribe el comando y sus alias en el mapa
                         this.commands.set(newCommand.name, newCommand);
                         if (newCommand.aliases && Array.isArray(newCommand.aliases)) {
                             newCommand.aliases.forEach(alias => this.commands.set(alias, newCommand));
@@ -80,7 +74,7 @@ class WhatsAppBot {
                 }
             }
         });
-         console.log('[Sistema] Vigilancia de comandos activada (Hot-Reload).');
+        console.log('[Sistema] Vigilancia de comandos activada (Hot-Reload).');
     }
 
     async getAuthMethod() {
@@ -106,35 +100,26 @@ class WhatsAppBot {
         });
     }
 
-    async startBot() {
-        console.log(`[MayBot] Inicializando...`);
-        const authMethod = await this.getAuthMethod();
-        const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder);
+    async connectToWhatsApp() {
+        const { state, saveCreds } = this.authInfo;
         const { version } = await fetchLatestBaileysVersion();
 
-        console.log(`[MayBot] Usando la versión de Baileys: ${version.join('.')}`);
-        
-        let phoneNumber = null;
-        if (authMethod === 'code' && !state.creds.registered) {
-            phoneNumber = await this.getPhoneNumber();
-        }
-
         this.sock = makeWASocket({
-        version,
-        auth: state,
-        logger,
-        browser: ['Windows', 'Chrome', '38.172.128.77'],
-        syncFullHistory: false,
-        markOnlineOnConnect: true,
-        printQRInTerminal: authMethod === 'qr'
-        })
+            version,
+            auth: state,
+            logger,
+            browser: [settings.bot.botname, 'Chrome', '121.0.0.0'],
+            syncFullHistory: false,
+            markOnlineOnConnect: true,
+            printQRInTerminal: true,
+        });
 
         this.sock.ev.on('creds.update', saveCreds);
 
         this.sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
-            if (qr && authMethod === 'qr') {
+            if (qr) {
                 console.log('Escanea el código QR con tu WhatsApp:');
                 qrcode.generate(qr, { small: true });
             }
@@ -143,19 +128,10 @@ class WhatsAppBot {
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
                 console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`);
                 if (shouldReconnect) {
-                    setTimeout(() => this.startBot(), 5000);
+                    setTimeout(() => this.connectToWhatsApp(), 5000);
                 }
             } else if (connection === 'open') {
                 console.log('[Conexión] establecida exitosamente.');
-            } else if (connection === 'connecting' && authMethod === 'code' && phoneNumber && !state.creds.registered) {
-                try {
-                    console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`);
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    const code = await this.sock.requestPairingCode(phoneNumber);
-                    console.log(`[Auth] Tu código de emparejamiento es: ${code}`);
-                } catch (error) {
-                    console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error);
-                }
             }
         });
 
@@ -164,6 +140,35 @@ class WhatsAppBot {
                 await this.handleMessage(message);
             }
         });
+    }
+
+    async startBot() {
+        console.log(`[MayBot] Inicializando...`);
+        this.authInfo = await useMultiFileAuthState(settings.bot.sessionFolder);
+
+        if (!this.authInfo.state.creds.registered) {
+            const authMethod = await this.getAuthMethod();
+            if (authMethod === 'code') {
+                const phoneNumber = await this.getPhoneNumber();
+                const tempSock = makeWASocket({
+                    version: (await fetchLatestBaileysVersion()).version,
+                    auth: this.authInfo.state,
+                    logger,
+                    printQRInTerminal: false,
+                });
+                try {
+                    console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    const code = await tempSock.requestPairingCode(phoneNumber);
+                    console.log(`[Auth] Tu código de emparejamiento es: ${code}`);
+                } catch (error) {
+                    console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error);
+                    return;
+                }
+            }
+        }
+        
+        this.connectToWhatsApp();
     }
 
     async handleMessage(message) {
@@ -178,7 +183,6 @@ class WhatsAppBot {
         const command = this.commands.get(commandName);
 
         if (command) {
-            // --- NUEVO BLOQUE DE SIMULACIÓN DE ESCRITURA ---
             await this.sock.sendPresenceUpdate('composing', message.key.remoteJid);
             try {
                 console.log(`[Comando] Ejecutando: ${command.name} | Usuario: ${message.key.remoteJid}`);
@@ -188,7 +192,6 @@ class WhatsAppBot {
                 console.error(`[Error] en el comando ${command.name}:`, error);
                 await this.sock.sendMessage(message.key.remoteJid, { text: `Ocurrió un error al ejecutar el comando: ${error.message}` }, { quoted: message });
             } finally {
-                // Se asegura de quitar el "escribiendo..." sin importar si el comando tuvo éxito o falló
                 await this.sock.sendPresenceUpdate('available', message.key.remoteJid);
             }
         }

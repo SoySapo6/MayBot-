@@ -1,4 +1,4 @@
-import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
+import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
 import fs from 'fs'
 import path from 'path'
@@ -13,6 +13,8 @@ class WhatsAppBot {
     constructor() {
         this.sock = null
         this.commands = new Map()
+        this.authInfo = null
+        this.isReconnecting = false
         this.loadCommands()
         this.watchCommands()
     }
@@ -79,12 +81,12 @@ class WhatsAppBot {
     async getAuthMethod() {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
         return new Promise((resolve) => {
-            console.log('¡Bienvenido a MayBot! Selecciona tu método de conexión:')
+            console.log('¡Bienvenido a MayBot! No se encontró una sesión válida.')
             console.log('1. Código QR')
-            console.log('2. Número de Teléfono')
+            console.log('2. Número de Teléfono (Código de vinculación)')
             rl.question('Selecciona una opción (1 o 2): ', (answer) => {
                 rl.close()
-                resolve(answer === '2' ? 'code' : 'qr')
+                resolve(answer.trim() === '2' ? 'code' : 'qr')
             })
         })
     }
@@ -92,48 +94,69 @@ class WhatsAppBot {
     async getPhoneNumber() {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
         return new Promise((resolve) => {
-            rl.question('Ingresa tu número de teléfono (formato: 51987654321): ', (number) => {
+            rl.question('Ingresa tu número de teléfono con el código de país (ej: 51987654321): ', (number) => {
                 rl.close()
                 resolve(number.replace(/\D/g, ''))
             })
         })
     }
 
-    async start() {
+    async startBot() {
         console.log(`[MayBot] Inicializando...`)
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
+        this.authInfo = { state, saveCreds }
         const { version } = await fetchLatestBaileysVersion()
 
         this.sock = makeWASocket({
             version,
             auth: state,
             logger,
-            browser: ['Windows', 'Chrome', '38.172.128.77'],
-            printQRInTerminal: true,
+            browser: Browsers.macOS('Desktop'),
             syncFullHistory: false,
             markOnlineOnConnect: true,
+            printQRInTerminal: true
         })
 
-        this.sock.ev.on('creds.update', saveCreds)
+        if (!this.sock.authState.creds.registered) {
+            const authMethod = await this.getAuthMethod()
+            if (authMethod === 'code') {
+                const phoneNumber = await this.getPhoneNumber()
+                try {
+                    this.sock.printQRInTerminal = false
+                    console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
+                    const code = await this.sock.requestPairingCode(phoneNumber)
+                    console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
+                } catch (error) {
+                    console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
+                    return
+                }
+            }
+        }
 
-        this.sock.ev.on('connection.update', async (update) => {
+        this.sock.ev.on('creds.update', this.authInfo.saveCreds)
+
+        this.sock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update
 
-            if (qr) {
+            if (qr && !this.isReconnecting) {
                 console.log('Escanea el código QR con tu WhatsApp:')
                 qrcode.generate(qr, { small: true })
             }
 
             if (connection === 'close') {
+                this.isReconnecting = true
                 const reason = lastDisconnect?.error?.output?.statusCode
                 const shouldReconnect = reason !== DisconnectReason.loggedOut
-                console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`)
+
+                console.log(`[Conexión] cerrada debido a: ${DisconnectReason[reason] || 'Error Desconocido'}, reconectando: ${shouldReconnect}`)
+
                 if (shouldReconnect) {
-                    this.start()
+                    setTimeout(() => this.startBot(), 5000)
                 } else {
-                    console.log('[Sistema] Conexión cerrada permanentemente. Borra la carpeta de sesión si quieres escanear un nuevo código.')
+                    console.log('[Sistema] No se puede reconectar. Cierre de sesión detectado. Elimina la carpeta de sesión y reinicia.')
                 }
             } else if (connection === 'open') {
+                this.isReconnecting = false
                 console.log('[Conexión] establecida exitosamente.')
             }
         })
@@ -143,20 +166,6 @@ class WhatsAppBot {
                 await this.handleMessage(message)
             }
         })
-
-        if (!this.sock.authState.creds.registered) {
-            const authMethod = await this.getAuthMethod()
-            if (authMethod === 'code') {
-                try {
-                    const phoneNumber = await this.getPhoneNumber()
-                    console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
-                    const code = await this.sock.requestPairingCode(phoneNumber)
-                    console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
-                } catch (error) {
-                    console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
-                }
-            }
-        }
     }
 
     async handleMessage(message) {
@@ -187,8 +196,12 @@ class WhatsAppBot {
 }
 
 const bot = new WhatsAppBot()
-bot.start().catch(error => {
+bot.startBot().catch(error => {
     console.error('[Error Crítico] Fallo al iniciar el bot:', error)
+})
+
+process.on('unhandledRejection', (err) => {
+    console.error('[Error No Controlado]', err)
 })
 
 process.on('SIGINT', () => {

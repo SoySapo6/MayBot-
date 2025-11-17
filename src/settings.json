@@ -16,7 +16,7 @@
   },
   "bot": {
     "prefixes": [".", "!", "#", "/"],
-    "sessionFolder": "MayBot"
+    "sessionFolder": "MayBot",
     "botname": "MayBot"
   },
   "fonts": {

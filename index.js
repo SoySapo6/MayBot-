@@ -13,7 +13,6 @@ class WhatsAppBot {
     constructor() {
         this.sock = null
         this.commands = new Map()
-        this.isPairingCodeRequested = false // Bandera para controlar el estado de emparejamiento
         this.loadCommands()
         this.watchCommands()
     }
@@ -105,11 +104,11 @@ class WhatsAppBot {
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
         const { version } = await fetchLatestBaileysVersion()
         
-        let useQR = true
+        let printQR = true
         if (!state.creds.registered) {
             const authMethod = await this.getAuthMethod()
             if (authMethod === 'code') {
-                useQR = false
+                printQR = false
             }
         }
         
@@ -118,21 +117,22 @@ class WhatsAppBot {
             auth: state,
             logger,
             browser: ['Windows', 'Chrome', '38.172.128.77'],
-            printQRInTerminal: useQR,
+            printQRInTerminal: printQR,
             syncFullHistory: false,
             markOnlineOnConnect: true,
         })
 
-        if (!useQR && !this.sock.authState.creds.registered) {
+        if (!printQR && !this.sock.authState.creds.registered) {
             try {
                 const phoneNumber = await this.getPhoneNumber()
-                this.isPairingCodeRequested = true // Activar la bandera ANTES de solicitar el código
+                console.log(`[Auth] El socket se está inicializando, esperando 3 segundos...`)
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
                 console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
                 const code = await this.sock.requestPairingCode(phoneNumber)
-                console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
+                console.log(`[Auth] Tu código de emparejamiento es: ${code.match(/.{1,4}/g).join('-') || code}`)
             } catch (error) {
                 console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
-                this.isPairingCodeRequested = false // Asegurarse de desactivar en caso de error
                 return
             }
         }
@@ -142,19 +142,12 @@ class WhatsAppBot {
         this.sock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update
 
-            if (qr && useQR) {
+            if (qr && printQR) {
                 console.log('Escanea el código QR con tu WhatsApp:')
                 qrcode.generate(qr, { small: true })
             }
 
             if (connection === 'close') {
-                // Lógica de control para la reconexión durante el emparejamiento
-                if (this.isPairingCodeRequested) {
-                    console.log('[Sistema] Cierre de conexión inicial durante el emparejamiento, esperando a que se ingrese el código.')
-                    this.isPairingCodeRequested = false // Desactivar la bandera para que el próximo cierre sí reconecte
-                    return // No hacer nada y esperar
-                }
-
                 const reason = lastDisconnect?.error?.output?.statusCode
                 const shouldReconnect = reason !== DisconnectReason.loggedOut
                 console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`)
@@ -163,7 +156,6 @@ class WhatsAppBot {
                 }
             } else if (connection === 'open') {
                 console.log('[Conexión] establecida exitosamente.')
-                this.isPairingCodeRequested = false // La conexión fue exitosa, resetear la bandera
             }
         })
 

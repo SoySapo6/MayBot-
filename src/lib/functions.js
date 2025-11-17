@@ -1,4 +1,4 @@
-import settings from './src/settings.json' with { type: 'json' };
+import settings from '../settings.json' with { type: 'json' };
 
 export function applyFont(text, fontType) {
     const fontMap = new Map();

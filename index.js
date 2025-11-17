@@ -1,4 +1,4 @@
-import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys'
+import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
 import fs from 'fs'
 import path from 'path'
@@ -81,9 +81,9 @@ class WhatsAppBot {
     async getAuthMethod() {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
         return new Promise((resolve) => {
-            console.log('¡Bienvenido a MayBot! No se encontró una sesión válida.')
+            console.log('¡Bienvenido a MayBot! Selecciona tu método de conexión:')
             console.log('1. Código QR')
-            console.log('2. Número de Teléfono (Código de vinculación)')
+            console.log('2. Número de Teléfono')
             rl.question('Selecciona una opción (1 o 2): ', (answer) => {
                 rl.close()
                 resolve(answer.trim() === '2' ? 'code' : 'qr')
@@ -94,15 +94,14 @@ class WhatsAppBot {
     async getPhoneNumber() {
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
         return new Promise((resolve) => {
-            rl.question('Ingresa tu número de teléfono con el código de país (ej: 51987654321): ', (number) => {
+            rl.question('Ingresa tu número de teléfono (formato: 51987654321): ', (number) => {
                 rl.close()
                 resolve(number.replace(/\D/g, ''))
             })
         })
     }
 
-    async startBot() {
-        console.log(`[MayBot] Inicializando...`)
+    async connectToWhatsApp() {
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
         this.authInfo = { state, saveCreds }
         const { version } = await fetchLatestBaileysVersion()
@@ -111,7 +110,7 @@ class WhatsAppBot {
             version,
             auth: state,
             logger,
-            browser: Browsers.macOS('Desktop'),
+            browser: ['Windows', 'Chrome', '38.172.128.77'],
             syncFullHistory: false,
             markOnlineOnConnect: true,
             printQRInTerminal: true
@@ -120,40 +119,36 @@ class WhatsAppBot {
         if (!this.sock.authState.creds.registered) {
             const authMethod = await this.getAuthMethod()
             if (authMethod === 'code') {
-                const phoneNumber = await this.getPhoneNumber()
                 try {
-                    this.sock.printQRInTerminal = false
+                    const phoneNumber = await this.getPhoneNumber()
                     console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
                     const code = await this.sock.requestPairingCode(phoneNumber)
                     console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
                 } catch (error) {
                     console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
+                    console.log('[Sistema] Reiniciando el proceso de conexión...')
+                    setTimeout(() => this.connectToWhatsApp(), 3000)
                     return
                 }
             }
         }
-
+        
         this.sock.ev.on('creds.update', this.authInfo.saveCreds)
 
-        this.sock.ev.on('connection.update', (update) => {
+        this.sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update
 
-            if (qr && !this.isReconnecting) {
+            if (qr) {
                 console.log('Escanea el código QR con tu WhatsApp:')
                 qrcode.generate(qr, { small: true })
             }
 
             if (connection === 'close') {
                 this.isReconnecting = true
-                const reason = lastDisconnect?.error?.output?.statusCode
-                const shouldReconnect = reason !== DisconnectReason.loggedOut
-
-                console.log(`[Conexión] cerrada debido a: ${DisconnectReason[reason] || 'Error Desconocido'}, reconectando: ${shouldReconnect}`)
-
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
+                console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`)
                 if (shouldReconnect) {
-                    setTimeout(() => this.startBot(), 5000)
-                } else {
-                    console.log('[Sistema] No se puede reconectar. Cierre de sesión detectado. Elimina la carpeta de sesión y reinicia.')
+                    setTimeout(() => this.connectToWhatsApp(), 5000)
                 }
             } else if (connection === 'open') {
                 this.isReconnecting = false
@@ -166,6 +161,11 @@ class WhatsAppBot {
                 await this.handleMessage(message)
             }
         })
+    }
+
+    async startBot() {
+        console.log(`[MayBot] Inicializando...`)
+        await this.connectToWhatsApp()
     }
 
     async handleMessage(message) {
@@ -198,10 +198,6 @@ class WhatsAppBot {
 const bot = new WhatsAppBot()
 bot.startBot().catch(error => {
     console.error('[Error Crítico] Fallo al iniciar el bot:', error)
-})
-
-process.on('unhandledRejection', (err) => {
-    console.error('[Error No Controlado]', err)
 })
 
 process.on('SIGINT', () => {

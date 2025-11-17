@@ -13,8 +13,6 @@ class WhatsAppBot {
     constructor() {
         this.sock = null
         this.commands = new Map()
-        this.authInfo = null
-        this.isReconnecting = false
         this.loadCommands()
         this.watchCommands()
     }
@@ -101,41 +99,43 @@ class WhatsAppBot {
         })
     }
 
-    async connectToWhatsApp() {
+    async startBot() {
+        console.log(`[MayBot] Inicializando...`)
         const { state, saveCreds } = await useMultiFileAuthState(settings.bot.sessionFolder)
-        this.authInfo = { state, saveCreds }
         const { version } = await fetchLatestBaileysVersion()
-
-        this.sock = makeWASocket({
+        
+        let authMethod = 'qr'
+        if (!state.creds.registered) {
+            authMethod = await this.getAuthMethod()
+        }
+        
+        const socketConfig = {
             version,
             auth: state,
             logger,
             browser: ['Windows', 'Chrome', '38.172.128.77'],
             syncFullHistory: false,
             markOnlineOnConnect: true,
-            printQRInTerminal: true
-        })
+            printQRInTerminal: authMethod === 'qr'
+        }
 
-        if (!this.sock.authState.creds.registered) {
-            const authMethod = await this.getAuthMethod()
-            if (authMethod === 'code') {
-                try {
-                    const phoneNumber = await this.getPhoneNumber()
-                    console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
-                    const code = await this.sock.requestPairingCode(phoneNumber)
-                    console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
-                } catch (error) {
-                    console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
-                    console.log('[Sistema] Reiniciando el proceso de conexión...')
-                    setTimeout(() => this.connectToWhatsApp(), 3000)
-                    return
-                }
+        this.sock = makeWASocket(socketConfig)
+
+        if (authMethod === 'code' && !this.sock.authState.creds.registered) {
+            try {
+                const phoneNumber = await this.getPhoneNumber()
+                console.log(`[Auth] Solicitando código para el número: ${phoneNumber}`)
+                const code = await this.sock.requestPairingCode(phoneNumber)
+                console.log(`[Auth] Tu código de emparejamiento es: ${code}`)
+            } catch (error) {
+                console.error('[Auth] Fallo al solicitar el código de emparejamiento:', error)
+                return
             }
         }
-        
-        this.sock.ev.on('creds.update', this.authInfo.saveCreds)
 
-        this.sock.ev.on('connection.update', async (update) => {
+        this.sock.ev.on('creds.update', saveCreds)
+
+        this.sock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update
 
             if (qr) {
@@ -144,14 +144,13 @@ class WhatsAppBot {
             }
 
             if (connection === 'close') {
-                this.isReconnecting = true
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
+                const reason = lastDisconnect?.error?.output?.statusCode
+                const shouldReconnect = reason !== DisconnectReason.loggedOut
                 console.log(`[Conexión] cerrada debido a: ${lastDisconnect?.error}, reconectando: ${shouldReconnect}`)
                 if (shouldReconnect) {
-                    setTimeout(() => this.connectToWhatsApp(), 5000)
+                    setTimeout(() => this.startBot(), 5000)
                 }
             } else if (connection === 'open') {
-                this.isReconnecting = false
                 console.log('[Conexión] establecida exitosamente.')
             }
         })
@@ -161,11 +160,6 @@ class WhatsAppBot {
                 await this.handleMessage(message)
             }
         })
-    }
-
-    async startBot() {
-        console.log(`[MayBot] Inicializando...`)
-        await this.connectToWhatsApp()
     }
 
     async handleMessage(message) {
